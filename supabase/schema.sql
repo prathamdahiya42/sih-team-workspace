@@ -54,7 +54,7 @@ create table if not exists public.teams (
 -- 4. Team Members Table (Enforces 6-9 Member Capacity Cap)
 create table if not exists public.team_members (
   team_id uuid references public.teams(id) on delete cascade,
-  user_id uuid references auth.users on delete cascade,
+  user_id uuid references public.profiles(id) on delete cascade,
   role text not null default 'member' check (role in ('owner', 'member')),
   joined_at timestamptz default now(),
   primary key (team_id, user_id)

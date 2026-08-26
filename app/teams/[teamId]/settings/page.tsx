@@ -45,22 +45,43 @@ export default function TeamSettingsPage() {
       }
       setTeam(teamData);
 
-      // Fetch members
-      const { data: membersData } = await supabase
+      // Fetch members (direct table query without fragile nested schema cache joins)
+      const { data: membersData, error: membersError } = await supabase
         .from('team_members')
-        .select(`
-          user_id,
-          role,
-          joined_at,
-          profile:user_id (
-            full_name,
-            email,
-            avatar_url
-          )
-        `)
+        .select('team_id, user_id, role, joined_at')
         .eq('team_id', teamId);
 
-      setMembers(membersData || []);
+      if (membersError) {
+        console.error('Error fetching members:', membersError);
+      }
+
+      const currentMembers = membersData || [];
+      const userIds = currentMembers.map((m) => m.user_id).filter(Boolean);
+      let profilesMap: Record<string, any> = {};
+
+      if (userIds.length > 0) {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, avatar_url')
+          .in('id', userIds);
+
+        (profilesData || []).forEach((p) => {
+          profilesMap[p.id] = p;
+        });
+      }
+
+      const enrichedMembers = currentMembers.map((m) => ({
+        ...m,
+        profile: profilesMap[m.user_id] || {
+          full_name: m.user_id === user.id 
+            ? (user.user_metadata?.full_name || user.email?.split('@')[0] || 'You')
+            : 'Teammate',
+          email: m.user_id === user.id ? user.email : undefined,
+          avatar_url: null,
+        },
+      }));
+
+      setMembers(enrichedMembers);
     } catch (e) {
       console.error('Error loading settings', e);
       router.push('/teams');

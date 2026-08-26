@@ -33,12 +33,24 @@ export default function TeamWorkspacePage() {
       setError(null);
 
       // 1. Get current user
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
         router.push('/auth/login');
         return;
       }
       setCurrentUser(user);
+
+      // Auto-ensure user profile exists
+      try {
+        await supabase.from('profiles').upsert({
+          id: user.id,
+          full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'SIH Member',
+          email: user.email,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+      } catch (e) {
+        console.warn('Profile sync notice:', e);
+      }
 
       // 2. Fetch Team Details
       const { data: teamData, error: teamError } = await supabase
@@ -52,33 +64,68 @@ export default function TeamWorkspacePage() {
       }
       setTeam(teamData);
 
-      // 3. Fetch Team Members & Profiles
+      // 3. Fetch Team Members (direct table query without fragile nested schema cache joins)
       const { data: membersData, error: membersError } = await supabase
         .from('team_members')
-        .select(`
-          user_id,
-          role,
-          joined_at,
-          profile:user_id (
-            full_name,
-            email,
-            avatar_url
-          )
-        `)
+        .select('team_id, user_id, role, joined_at')
         .eq('team_id', teamId);
 
       if (membersError) {
         console.error('Error fetching members:', membersError);
       }
-      setTeamMembers(membersData || []);
 
-      // Check if current user is a member
-      const isMember = (membersData || []).some((m) => m.user_id === user.id);
-      if (!isMember) {
+      let currentMembers = membersData || [];
+
+      // Check if current user is a member or team creator
+      const isMember = currentMembers.some((m) => m.user_id === user.id);
+      const isCreator = teamData.created_by === user.id;
+
+      if (!isMember && !isCreator) {
         throw new Error('You are not a member of this team. Please join using an invite code.');
       }
 
-      // 4. Fetch Initial Messages (last 60)
+      // Self-heal: If user is creator but team_members row was missing, add them
+      if (!isMember && isCreator) {
+        await supabase.from('team_members').insert({
+          team_id: teamId,
+          user_id: user.id,
+          role: 'owner',
+        });
+        currentMembers = [
+          ...currentMembers,
+          { team_id: teamId, user_id: user.id, role: 'owner', joined_at: new Date().toISOString() },
+        ];
+      }
+
+      // 4. Fetch member profiles
+      const userIds = currentMembers.map((m) => m.user_id).filter(Boolean);
+      let profilesMap: Record<string, any> = {};
+
+      if (userIds.length > 0) {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, avatar_url')
+          .in('id', userIds);
+
+        (profilesData || []).forEach((p) => {
+          profilesMap[p.id] = p;
+        });
+      }
+
+      const enrichedMembers = currentMembers.map((m) => ({
+        ...m,
+        profile: profilesMap[m.user_id] || {
+          full_name: m.user_id === user.id 
+            ? (user.user_metadata?.full_name || user.email?.split('@')[0] || 'You')
+            : 'Teammate',
+          email: m.user_id === user.id ? user.email : undefined,
+          avatar_url: null,
+        },
+      }));
+
+      setTeamMembers(enrichedMembers);
+
+      // 5. Fetch Initial Messages (last 60)
       const { data: msgsData, error: msgsError } = await supabase
         .from('messages')
         .select('*')

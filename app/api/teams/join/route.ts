@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function POST(req: Request) {
   try {
@@ -16,20 +17,29 @@ export async function POST(req: Request) {
     }
 
     const cleanCode = inviteCode.trim().toUpperCase();
+    const admin = createAdminClient();
 
-    // 1. Find team by invite code
-    const { data: team, error: teamError } = await supabase
+    // 1. Ensure user profile exists
+    await admin.from('profiles').upsert({
+      id: user.id,
+      full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'SIH Member',
+      email: user.email,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
+    // 2. Find team by invite code (using admin client to bypass RLS since user is not a member yet)
+    const { data: team, error: teamError } = await admin
       .from('teams')
       .select('id, name, invite_code')
       .eq('invite_code', cleanCode)
-      .single();
+      .maybeSingle();
 
     if (teamError || !team) {
       return NextResponse.json({ error: 'Invalid invite code. Team not found.' }, { status: 404 });
     }
 
-    // 2. Check if user is already a member
-    const { data: existingMember } = await supabase
+    // 3. Check if user is already a member
+    const { data: existingMember } = await admin
       .from('team_members')
       .select('team_id')
       .eq('team_id', team.id)
@@ -40,8 +50,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ team, message: 'Already a member of this team' });
     }
 
-    // 3. Check current member count (Capacity Cap = 9)
-    const { count, error: countError } = await supabase
+    // 4. Check current member count (Capacity Cap = 9)
+    const { count, error: countError } = await admin
       .from('team_members')
       .select('*', { count: 'exact', head: true })
       .eq('team_id', team.id);
@@ -57,8 +67,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4. Add user to team
-    const { error: joinError } = await supabase
+    // 5. Add user to team
+    const { error: joinError } = await admin
       .from('team_members')
       .insert({
         team_id: team.id,
@@ -70,9 +80,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: joinError.message }, { status: 500 });
     }
 
-    // 5. Post system message
+    // 6. Post system message
     const displayName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'A new teammate';
-    await supabase.from('messages').insert({
+    await admin.from('messages').insert({
       team_id: team.id,
       user_id: null,
       content: `${displayName} joined the team workspace.`,

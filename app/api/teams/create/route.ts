@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import crypto from 'crypto';
 
 export async function POST(req: Request) {
@@ -20,8 +21,18 @@ export async function POST(req: Request) {
     const codeSuffix = crypto.randomBytes(3).toString('hex').toUpperCase();
     const inviteCode = `SIH-${codeSuffix}`;
 
+    const admin = createAdminClient();
+
+    // Ensure creator profile exists in profiles table
+    await admin.from('profiles').upsert({
+      id: user.id,
+      full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'SIH Member',
+      email: user.email,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
     // Insert Team
-    const { data: team, error: teamError } = await supabase
+    const { data: team, error: teamError } = await admin
       .from('teams')
       .insert({
         name: name.trim(),
@@ -37,20 +48,20 @@ export async function POST(req: Request) {
     }
 
     // Add creator as Team Owner
-    const { error: memberError } = await supabase
+    const { error: memberError } = await admin
       .from('team_members')
-      .insert({
+      .upsert({
         team_id: team.id,
         user_id: user.id,
         role: 'owner',
-      });
+      }, { onConflict: 'team_id,user_id' });
 
     if (memberError) {
       return NextResponse.json({ error: memberError.message }, { status: 500 });
     }
 
     // Insert Initial System Greeting Message
-    await supabase.from('messages').insert({
+    await admin.from('messages').insert({
       team_id: team.id,
       user_id: null,
       content: `Welcome to ${team.name}! Your AI 7th Member is ready. Configure your free API key in Settings, start chatting, or click "Summarize" anytime.`,

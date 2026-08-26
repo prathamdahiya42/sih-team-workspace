@@ -34,17 +34,29 @@ export default function TeamsPage() {
   const loadUserData = async () => {
     try {
       setLoading(true);
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser();
 
-      if (!currentUser) {
+      if (authError || !currentUser) {
         router.push('/auth/login');
         return;
       }
 
       setUser(currentUser);
 
-      // Fetch user's teams
-      const { data: userMemberships, error } = await supabase
+      // Auto-ensure user profile exists
+      try {
+        await supabase.from('profiles').upsert({
+          id: currentUser.id,
+          full_name: currentUser.user_metadata?.full_name || currentUser.email?.split('@')[0] || 'SIH Member',
+          email: currentUser.email,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+      } catch (e) {
+        console.warn('Profile sync notice:', e);
+      }
+
+      // Fetch user's team memberships
+      const { data: userMemberships, error: memberError } = await supabase
         .from('team_members')
         .select(`
           role,
@@ -58,17 +70,39 @@ export default function TeamsPage() {
         `)
         .eq('user_id', currentUser.id);
 
+      const teamMap = new Map<string, any>();
+
       if (userMemberships) {
-        const extractedTeams = userMemberships
-          .map((m: any) => ({
-            ...m.teams,
-            user_role: m.role,
-          }))
-          .filter(Boolean);
-        setTeams(extractedTeams);
+        userMemberships.forEach((m: any) => {
+          if (m.teams && m.teams.id) {
+            teamMap.set(m.teams.id, {
+              ...m.teams,
+              user_role: m.role,
+            });
+          }
+        });
       }
+
+      // Fallback: Also fetch teams created by the user
+      const { data: createdTeams } = await supabase
+        .from('teams')
+        .select('*')
+        .eq('created_by', currentUser.id);
+
+      if (createdTeams) {
+        createdTeams.forEach((t: any) => {
+          if (t && t.id && !teamMap.has(t.id)) {
+            teamMap.set(t.id, {
+              ...t,
+              user_role: 'owner',
+            });
+          }
+        });
+      }
+
+      setTeams(Array.from(teamMap.values()));
     } catch (e) {
-      console.error(e);
+      console.error('Error loading user teams:', e);
     } finally {
       setLoading(false);
     }

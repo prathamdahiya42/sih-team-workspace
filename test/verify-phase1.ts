@@ -7,7 +7,7 @@ async function runTests() {
   let passed = 0;
   let failed = 0;
 
-  function assert(condition, name) {
+  function assert(condition: any, name: string) {
     if (condition) {
       console.log(`  ✅ PASS: ${name}`);
       passed++;
