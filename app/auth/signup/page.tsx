@@ -15,8 +15,13 @@ export default function SignupPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmationSent, setConfirmationSent] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+
+  const isConfigured = 
+    process.env.NEXT_PUBLIC_SUPABASE_URL && 
+    !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder.supabase.co');
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,6 +32,13 @@ export default function SignupPage() {
 
     if (password.length < 6) {
       setError('Password must be at least 6 characters long');
+      return;
+    }
+
+    if (!isConfigured) {
+      setError(
+        'Supabase is not configured on this deployment. Please add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your Netlify Environment Variables, then trigger a redeploy.'
+      );
       return;
     }
 
@@ -48,11 +60,22 @@ export default function SignupPage() {
         throw new Error(authError.message);
       }
 
-      // If user session created immediately or email confirmation not strictly required
+      // If Supabase has "Confirm email" enabled, session will be null
+      if (data.user && !data.session) {
+        setConfirmationSent(true);
+        return;
+      }
+
+      // If user session created immediately (Confirm email is turned off)
       router.push('/teams');
       router.refresh();
     } catch (err: any) {
-      setError(err.message || 'Failed to create account. Please try again.');
+      const msg = err.message || '';
+      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')) {
+        setError('Unable to reach Supabase. Ensure NEXT_PUBLIC_SUPABASE_URL is set in Netlify Site Settings > Environment Variables.');
+      } else {
+        setError(msg || 'Failed to create account. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -79,60 +102,91 @@ export default function SignupPage() {
         </CardHeader>
 
         <CardContent className="space-y-4 pt-4">
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-xs font-medium border border-red-200">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
+          {!isConfigured && (
+            <div className="p-3.5 rounded-xl bg-amber-50 text-amber-800 text-xs border border-amber-200 leading-relaxed">
+              <div className="font-bold flex items-center gap-1.5 mb-1 text-amber-900">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                <span>Netlify Configuration Required</span>
+              </div>
+              Please add <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px]">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px]">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in Netlify (Site Settings → Environment variables), then redeploy.
             </div>
           )}
 
-          <form onSubmit={handleSignup} className="space-y-4">
-            <Input
-              label="Full Name"
-              type="text"
-              placeholder="e.g. Aarav Sharma"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
-            />
+          {confirmationSent ? (
+            <div className="p-4 rounded-xl bg-sihgreen-50 text-sihgreen-800 border border-sihgreen-200 space-y-3">
+              <div className="flex items-center gap-2 font-bold text-sihgreen-900">
+                <CheckCircle2 className="h-5 w-5 text-sihgreen-600 shrink-0" />
+                <span>Check your Gmail Inbox!</span>
+              </div>
+              <p className="text-xs text-sihgreen-800 leading-relaxed">
+                We sent a confirmation link to <strong className="font-semibold">{email}</strong>. Please click the link in your email to activate your account, then log in.
+              </p>
+              <div className="pt-2 border-t border-sihgreen-200">
+                <Link href="/auth/login">
+                  <Button variant="primary" size="sm" className="w-full bg-sihgreen-600 hover:bg-sihgreen-700">
+                    Go to Sign In <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <>
+              {error && (
+                <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-xs font-medium border border-red-200">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">{error}</span>
+                </div>
+              )}
 
-            <Input
-              label="Email Address"
-              type="email"
-              placeholder="teammate@college.edu"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+              <form onSubmit={handleSignup} className="space-y-4">
+                <Input
+                  label="Full Name"
+                  type="text"
+                  placeholder="e.g. Aarav Sharma"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                />
 
-            <Input
-              label="Password (min 6 characters)"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+                <Input
+                  label="Email Address"
+                  type="email"
+                  placeholder="teammate@college.edu"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
 
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              loading={loading}
-              className="w-full shadow-glow-saffron font-bold text-sm"
-            >
-              Sign Up & Continue <ArrowRight className="h-4 w-4 ml-1" />
-            </Button>
-          </form>
+                <Input
+                  label="Password (min 6 characters)"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
 
-          <div className="text-center pt-4 border-t border-slate-100">
-            <p className="text-xs text-slate-500">
-              Already have an account?{' '}
-              <Link href="/auth/login" className="font-bold text-saffron-600 hover:text-saffron-700 underline">
-                Log in
-              </Link>
-            </p>
-          </div>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="lg"
+                  loading={loading}
+                  className="w-full shadow-glow-saffron font-bold text-sm"
+                >
+                  Sign Up & Continue <ArrowRight className="h-4 w-4 ml-1" />
+                </Button>
+              </form>
+
+              <div className="text-center pt-4 border-t border-slate-100">
+                <p className="text-xs text-slate-500">
+                  Already have an account?{' '}
+                  <Link href="/auth/login" className="font-bold text-saffron-600 hover:text-saffron-700 underline">
+                    Log in
+                  </Link>
+                </p>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

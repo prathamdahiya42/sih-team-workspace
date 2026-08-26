@@ -17,10 +17,21 @@ export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
 
+  const isConfigured = 
+    process.env.NEXT_PUBLIC_SUPABASE_URL && 
+    !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder.supabase.co');
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       setError('Please fill in all fields');
+      return;
+    }
+
+    if (!isConfigured) {
+      setError(
+        'Supabase is not configured on this deployment. Please add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your Netlify Environment Variables, then trigger a redeploy.'
+      );
       return;
     }
 
@@ -34,13 +45,24 @@ export default function LoginPage() {
       });
 
       if (authError) {
+        if (authError.message.toLowerCase().includes('email not confirmed')) {
+          throw new Error('Email not confirmed. Please check your Gmail inbox for the confirmation link, or disable "Confirm email" in Supabase Auth settings for instant login.');
+        }
+        if (authError.message.toLowerCase().includes('failed to fetch') || authError.message.toLowerCase().includes('network')) {
+          throw new Error('Unable to reach Supabase backend. Please check your Netlify environment variables (NEXT_PUBLIC_SUPABASE_URL).');
+        }
         throw new Error(authError.message);
       }
 
       router.push('/teams');
       router.refresh();
     } catch (err: any) {
-      setError(err.message || 'Failed to sign in. Please check your credentials.');
+      const msg = err.message || '';
+      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')) {
+        setError('Unable to fetch from Supabase. Ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set in Netlify Site Settings > Environment Variables.');
+      } else {
+        setError(msg || 'Failed to sign in. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
     }
@@ -67,10 +89,20 @@ export default function LoginPage() {
         </CardHeader>
 
         <CardContent className="space-y-4 pt-4">
+          {!isConfigured && (
+            <div className="p-3.5 rounded-xl bg-amber-50 text-amber-800 text-xs border border-amber-200 leading-relaxed">
+              <div className="font-bold flex items-center gap-1.5 mb-1 text-amber-900">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                <span>Netlify Configuration Required</span>
+              </div>
+              Please add <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px]">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px]">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in Netlify (Site Settings → Environment variables), then redeploy.
+            </div>
+          )}
+
           {error && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-xs font-medium border border-red-200">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-xs font-medium border border-red-200">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span className="leading-relaxed">{error}</span>
             </div>
           )}
 
