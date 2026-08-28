@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     // 5. Fetch Only Unsummarized Messages (since last message_range_end)
     let messagesQuery = supabase
       .from('messages')
-      .select('id, user_id, content, type, created_at')
+      .select('id, user_id, content, type, meta, created_at')
       .eq('team_id', teamId)
       .neq('type', 'system')
       .neq('type', 'agent') // Don't re-summarize AI summaries themselves
@@ -125,12 +125,23 @@ export async function POST(req: Request) {
     }
 
     const formattedTranscript = formatTranscript(
-      unsummarizedMessages.map((m) => ({
-        sender: m.user_id ? userMap[m.user_id] : 'System/Recap',
-        content: m.content,
-        type: m.type,
-        created_at: m.created_at,
-      }))
+      unsummarizedMessages.map((m) => {
+        let senderName = 'Teammate';
+        if (m.user_id && userMap[m.user_id]) {
+          senderName = userMap[m.user_id];
+        } else if (m.meta?.originalSenderName) {
+          senderName = m.meta.originalSenderName;
+        } else if (m.type === 'transcript') {
+          senderName = 'Call Recap';
+        }
+
+        return {
+          sender: senderName,
+          content: m.content,
+          type: m.type,
+          created_at: m.created_at,
+        };
+      })
     );
 
     // 7. Initialize AI Provider & Generate Summary

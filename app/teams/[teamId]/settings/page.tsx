@@ -48,7 +48,7 @@ export default function TeamSettingsPage() {
       // Fetch members (direct table query without fragile nested schema cache joins)
       const { data: membersData, error: membersError } = await supabase
         .from('team_members')
-        .select('team_id, user_id, role, joined_at')
+        .select('team_id, user_id, role, custom_role, joined_at')
         .eq('team_id', teamId);
 
       if (membersError) {

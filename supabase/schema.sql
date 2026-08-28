@@ -12,6 +12,7 @@ create table if not exists public.profiles (
   full_name text,
   email text,
   avatar_url text,
+  preferences jsonb not null default '{}'::jsonb,
   updated_at timestamptz default now()
 );
 
@@ -22,12 +23,13 @@ language plpgsql
 security definer
 as $$
 begin
-  insert into public.profiles (id, full_name, email, avatar_url)
+  insert into public.profiles (id, full_name, email, avatar_url, preferences)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
     new.email,
-    coalesce(new.raw_user_meta_data->>'avatar_url', null)
+    coalesce(new.raw_user_meta_data->>'avatar_url', null),
+    coalesce(new.raw_user_meta_data->'preferences', '{}'::jsonb)
   )
   on conflict (id) do update set
     full_name = coalesce(excluded.full_name, profiles.full_name),
@@ -56,6 +58,7 @@ create table if not exists public.team_members (
   team_id uuid references public.teams(id) on delete cascade,
   user_id uuid references public.profiles(id) on delete cascade,
   role text not null default 'member' check (role in ('owner', 'member')),
+  custom_role text, -- leader-assigned role (e.g. 'Frontend Lead', 'Backend Lead')
   joined_at timestamptz default now(),
   primary key (team_id, user_id)
 );
@@ -89,12 +92,21 @@ create trigger enforce_team_member_cap
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
   team_id uuid references public.teams(id) on delete cascade,
-  user_id uuid references auth.users, -- null for 'agent' and 'system'
+  user_id uuid references auth.users, -- null for 'agent', 'system', and unmatched 'imported'
   content text not null,
-  type text not null default 'text' check (type in ('text', 'agent', 'transcript', 'system')),
-  meta jsonb default '{}'::jsonb, -- e.g. {"call_id": "...", "model": "..."}
+  type text not null default 'text' check (type in ('text', 'agent', 'transcript', 'system', 'imported')),
+  meta jsonb not null default '{}'::jsonb, -- e.g. {"call_id": "...", "model": "...", "source": "whatsapp"}
   created_at timestamptz default now()
 );
+
+-- Ensure constraint allows 'imported' on existing databases
+do $$
+begin
+  alter table public.messages drop constraint if exists messages_type_check;
+  alter table public.messages add constraint messages_type_check check (type in ('text', 'agent', 'transcript', 'system', 'imported'));
+exception when others then
+  null;
+end $$;
 
 -- 6. Summaries Table
 create table if not exists public.summaries (
@@ -171,6 +183,22 @@ create policy "Team members create summaries" on public.summaries for insert wit
 alter table public.calls enable row level security;
 create policy "Team members read calls" on public.calls for select using (is_team_member(team_id));
 create policy "Team members manage calls" on public.calls for all using (is_team_member(team_id));
+
+-- 8b. WhatsApp Chat Imports Table
+create table if not exists public.chat_imports (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references public.teams(id) on delete cascade,
+  uploaded_by uuid not null references public.profiles(id),
+  filename text not null,
+  message_count int not null default 0,
+  matched_count int not null default 0,
+  unmatched_senders text[] default '{}',
+  created_at timestamptz not null default now()
+);
+
+alter table public.chat_imports enable row level security;
+create policy "Team members read chat imports" on public.chat_imports for select using (is_team_member(team_id));
+create policy "Team members create chat imports" on public.chat_imports for insert with check (is_team_member(team_id));
 
 -- Note: team_api_keys gets NO client-facing policy! RLS is enabled with zero policies for authenticated/anon.
 alter table public.team_api_keys enable row level security;

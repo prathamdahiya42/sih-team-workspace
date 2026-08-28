@@ -86,10 +86,17 @@ export function Navbar({ user, team, onStartCall, isCallActive }: NavbarProps) {
           )}
 
           {user ? (
-            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-navy-50 text-navy-800 font-semibold text-xs border border-navy-200">
-                {user.email?.slice(0, 2).toUpperCase() || 'U'}
-              </div>
+            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+              <Link href="/settings" title="Account & Profile Settings">
+                <Button variant="ghost" size="sm" className="h-8 px-2 flex items-center gap-1.5 hover:bg-slate-100 rounded-lg">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-navy-50 text-navy-800 font-semibold text-[11px] border border-navy-200">
+                    {user.email?.slice(0, 2).toUpperCase() || 'U'}
+                  </div>
+                  <span className="text-xs font-semibold text-slate-700 hidden lg:inline max-w-[100px] truncate">
+                    {user.user_metadata?.full_name || 'Profile'}
+                  </span>
+                </Button>
+              </Link>
               <Button variant="ghost" size="icon" onClick={handleLogout} title="Sign Out">
                 <LogOut className="h-4 w-4 text-slate-500" />
               </Button>

@@ -1,16 +1,18 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useTransition } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
+import { WhatsAppImportModal } from './WhatsAppImportModal';
 import { MessageSquare, Sparkles, AlertCircle } from 'lucide-react';
+import { TeamMember, ChatMessageItem } from '@/lib/types';
 
 interface ChatContainerProps {
   teamId: string;
   initialMessages: any[];
   currentUser: any;
-  teamMembers: Array<{ user_id: string; profile?: { full_name?: string; email?: string } }>;
+  teamMembers: TeamMember[];
 }
 
 export function ChatContainer({
@@ -21,6 +23,9 @@ export function ChatContainer({
 }: ChatContainerProps) {
   const [messages, setMessages] = useState<any[]>(initialMessages || []);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isResearching, setIsResearching] = useState(false);
+  const [researchStatus, setResearchStatus] = useState<string | null>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const supabase = createClient();
@@ -34,6 +39,15 @@ export function ChatContainer({
     return map;
   }, [teamMembers]);
 
+  // Helper map for member custom roles
+  const memberRoleMap = React.useMemo(() => {
+    const map: Record<string, string | null> = {};
+    teamMembers.forEach((m) => {
+      map[m.user_id] = m.custom_role || null;
+    });
+    return map;
+  }, [teamMembers]);
+
   // Auto-scroll to bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -42,6 +56,24 @@ export function ChatContainer({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Fetch / refresh messages
+  const reloadMessages = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      if (!error && data) {
+        setMessages(data);
+      }
+    } catch (e) {
+      console.error('Error reloading messages:', e);
+    }
+  };
 
   // Realtime subscription for messages
   useEffect(() => {
@@ -121,6 +153,46 @@ export function ChatContainer({
     }
   };
 
+  // Trigger Chat Extension / Web Research Command
+  const handleTriggerExtension = async (command: string, query: string) => {
+    try {
+      setIsResearching(true);
+      setResearchStatus(`Researching the web & synthesizing "${query}"...`);
+      setErrorToast(null);
+
+      const res = await fetch('/api/chat/extension', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teamId, command, query }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to execute extension command');
+      }
+
+      // Ensure both user command message and AI agent response show immediately if not arrived via realtime
+      if (data.userMessage || data.agentMessage) {
+        setMessages((prev) => {
+          let updated = [...prev];
+          if (data.userMessage && !updated.some((m) => m.id === data.userMessage.id)) {
+            updated.push(data.userMessage);
+          }
+          if (data.agentMessage && !updated.some((m) => m.id === data.agentMessage.id)) {
+            updated.push(data.agentMessage);
+          }
+          return updated;
+        });
+      }
+    } catch (err: any) {
+      setErrorToast(err.message || 'Extension error. Make sure your active AI key is configured in settings.');
+    } finally {
+      setIsResearching(false);
+      setResearchStatus(null);
+    }
+  };
+
   return (
     <div className="flex h-[calc(100vh-8.5rem)] flex-col rounded-2xl border border-slate-200/80 bg-slate-50/50 shadow-soft overflow-hidden">
       {/* Error Toast */}
@@ -148,7 +220,7 @@ export function ChatContainer({
             </div>
             <h4 className="text-sm font-bold text-slate-800">Team Chat Workspace</h4>
             <p className="text-xs text-slate-500 max-w-sm mt-1">
-              Start ideating and typing messages with your teammates! The AI 7th Member is listening and ready to summarize decisions anytime.
+              Start ideating and typing messages with your teammates! Try typing <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-700">/research &lt;topic&gt;</code> to search the web with your working AI key.
             </p>
           </div>
         ) : (
@@ -157,7 +229,8 @@ export function ChatContainer({
               key={msg.id}
               message={{
                 ...msg,
-                sender_name: msg.user_id ? memberNameMap[msg.user_id] : undefined,
+                sender_name: msg.user_id ? memberNameMap[msg.user_id] : (msg.meta?.originalSenderName || undefined),
+                sender_role: msg.user_id ? memberRoleMap[msg.user_id] : null,
               }}
               isCurrentUser={msg.user_id === currentUser?.id}
             />
@@ -173,6 +246,15 @@ export function ChatContainer({
           </div>
         )}
 
+        {isResearching && (
+          <div className="flex justify-center my-4">
+            <div className="flex items-center gap-2 rounded-xl bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 border border-blue-200 animate-pulse shadow-sm">
+              <span className="flex h-2 w-2 rounded-full bg-blue-600 animate-ping" />
+              <span>{researchStatus || '7th Member is searching the web & synthesizing findings...'}</span>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -180,8 +262,21 @@ export function ChatContainer({
       <ChatInput
         onSendMessage={handleSendMessage}
         onTriggerSummarize={handleTriggerSummarize}
+        onTriggerExtension={handleTriggerExtension}
+        onOpenImport={() => setIsImportModalOpen(true)}
         isSummarizing={isSummarizing}
+        isResearching={isResearching}
+      />
+
+      {/* WhatsApp Import Modal */}
+      <WhatsAppImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        teamId={teamId}
+        onImportComplete={reloadMessages}
+        onTriggerSummarize={handleTriggerSummarize}
       />
     </div>
   );
 }
+

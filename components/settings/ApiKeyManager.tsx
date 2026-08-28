@@ -168,7 +168,7 @@ export function ApiKeyManager({ teamId }: ApiKeyManagerProps) {
             <div>
               <CardTitle>AI Provider & Free API Keys</CardTitle>
               <CardDescription>
-                Supply your team's free API key. Keys are encrypted with Supabase Vault / AES-256 and never exposed client-side.
+                Supply your team's free API key. This key is shared with your whole team — anyone can use the AI once it's added here.
               </CardDescription>
             </div>
           </div>
@@ -180,6 +180,16 @@ export function ApiKeyManager({ teamId }: ApiKeyManagerProps) {
       </CardHeader>
 
       <CardContent className="space-y-6">
+        {/* Shared Team Notice Banner */}
+        <div className="p-3.5 rounded-xl bg-navy-50/70 border border-navy-200/80 text-xs text-navy-800 flex items-start gap-2.5">
+          <ShieldCheck className="h-4 w-4 text-navy-600 shrink-0 mt-0.5" />
+          <div className="leading-relaxed">
+            <span className="font-bold block text-navy-950">Shared Workspace Key</span>
+            <span>
+              This key is shared with your entire 6–9 member team. Once any teammate pastes a free key here, all members can immediately use the AI 7th Member for summaries and ideation.
+            </span>
+          </div>
+        </div>
         {toast && (
           <div
             className={`flex items-center justify-between p-3 rounded-xl text-xs font-medium ${

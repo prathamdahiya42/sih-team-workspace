@@ -67,7 +67,7 @@ export default function TeamWorkspacePage() {
       // 3. Fetch Team Members (direct table query without fragile nested schema cache joins)
       const { data: membersData, error: membersError } = await supabase
         .from('team_members')
-        .select('team_id, user_id, role, joined_at')
+        .select('team_id, user_id, role, custom_role, joined_at')
         .eq('team_id', teamId);
 
       if (membersError) {
@@ -93,7 +93,7 @@ export default function TeamWorkspacePage() {
         });
         currentMembers = [
           ...currentMembers,
-          { team_id: teamId, user_id: user.id, role: 'owner', joined_at: new Date().toISOString() },
+          { team_id: teamId, user_id: user.id, role: 'owner', custom_role: null, joined_at: new Date().toISOString() },
         ];
       }
 
