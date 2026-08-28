@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Sparkles, AlertCircle, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { getFriendlyAuthErrorMessage } from '@/lib/auth/errors';
 
 export default function SignupPage() {
   const [fullName, setFullName] = useState('');
@@ -25,7 +26,7 @@ export default function SignupPage() {
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName || !email || !password) {
+    if (!fullName.trim() || !email.trim() || !password) {
       setError('Please fill in all fields');
       return;
     }
@@ -46,6 +47,10 @@ export default function SignupPage() {
       setLoading(true);
       setError(null);
 
+      const redirectUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}/auth/callback?next=/teams`
+        : undefined;
+
       const { data, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
@@ -53,11 +58,18 @@ export default function SignupPage() {
           data: {
             full_name: fullName.trim(),
           },
+          emailRedirectTo: redirectUrl,
         },
       });
 
       if (authError) {
-        throw new Error(authError.message);
+        throw authError;
+      }
+
+      // Check for silent duplicate user (Supabase returns empty identities array when user already exists & email confirmation is on)
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        setError('An account with this email address already exists. Please log in with your password or request a password reset.');
+        return;
       }
 
       // If Supabase has "Confirm email" enabled, session will be null
@@ -70,12 +82,7 @@ export default function SignupPage() {
       router.push('/teams');
       router.refresh();
     } catch (err: any) {
-      const msg = err.message || '';
-      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')) {
-        setError('Unable to reach Supabase. Ensure NEXT_PUBLIC_SUPABASE_URL is set in Netlify Site Settings > Environment Variables.');
-      } else {
-        setError(msg || 'Failed to create account. Please try again.');
-      }
+      setError(getFriendlyAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }

@@ -1,29 +1,49 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
-import { Sparkles, AlertCircle, ArrowRight, Lock, Mail } from 'lucide-react';
+import { Sparkles, AlertCircle, ArrowRight, Lock, Mail, CheckCircle2, KeyRound } from 'lucide-react';
+import { getFriendlyAuthErrorMessage } from '@/lib/auth/errors';
 
-export default function LoginPage() {
+type AuthMode = 'password' | 'magic_link' | 'forgot_password';
+
+function LoginForm() {
+  const [mode, setMode] = useState<AuthMode>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailSentNotice, setEmailSentNotice] = useState<string | null>(null);
+
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
 
   const isConfigured = 
     process.env.NEXT_PUBLIC_SUPABASE_URL && 
     !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder.supabase.co');
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // Check URL query parameters for callback messages or errors
+  useEffect(() => {
+    const urlError = searchParams.get('error') || searchParams.get('error_description');
+    const urlMsg = searchParams.get('message');
+
+    if (urlError) {
+      setError(getFriendlyAuthErrorMessage(urlError));
+    } else if (urlMsg) {
+      setEmailSentNotice(urlMsg);
+    }
+  }, [searchParams]);
+
+  // 1. Password Sign In
+  const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       setError('Please fill in all fields');
       return;
     }
@@ -38,6 +58,7 @@ export default function LoginPage() {
     try {
       setLoading(true);
       setError(null);
+      setEmailSentNotice(null);
 
       const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -45,24 +66,82 @@ export default function LoginPage() {
       });
 
       if (authError) {
-        if (authError.message.toLowerCase().includes('email not confirmed')) {
-          throw new Error('Email not confirmed. Please check your Gmail inbox for the confirmation link, or disable "Confirm email" in Supabase Auth settings for instant login.');
-        }
-        if (authError.message.toLowerCase().includes('failed to fetch') || authError.message.toLowerCase().includes('network')) {
-          throw new Error('Unable to reach Supabase backend. Please check your Netlify environment variables (NEXT_PUBLIC_SUPABASE_URL).');
-        }
-        throw new Error(authError.message);
+        throw authError;
       }
 
       router.push('/teams');
       router.refresh();
     } catch (err: any) {
-      const msg = err.message || '';
-      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')) {
-        setError('Unable to fetch from Supabase. Ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set in Netlify Site Settings > Environment Variables.');
-      } else {
-        setError(msg || 'Failed to sign in. Please check your credentials.');
+      setError(getFriendlyAuthErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 2. Magic Link Sign In (Custom SMTP / Resend)
+  const handleMagicLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) {
+      setError('Please enter your email address');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      setEmailSentNotice(null);
+
+      const redirectUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}/auth/callback?next=/teams`
+        : undefined;
+
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: {
+          emailRedirectTo: redirectUrl,
+        },
+      });
+
+      if (otpError) {
+        throw otpError;
       }
+
+      setEmailSentNotice(`Magic sign-in link sent to ${email.trim()}! Check your inbox to sign in instantly.`);
+    } catch (err: any) {
+      setError(getFriendlyAuthErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. Forgot / Reset Password Request (Custom SMTP / Resend)
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) {
+      setError('Please enter your email address');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      setEmailSentNotice(null);
+
+      const redirectUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}/auth/callback?next=/auth/reset-password`
+        : undefined;
+
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: redirectUrl,
+      });
+
+      if (resetError) {
+        throw resetError;
+      }
+
+      setEmailSentNotice(`Password reset link sent to ${email.trim()}! Please check your email to set a new password.`);
+    } catch (err: any) {
+      setError(getFriendlyAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -82,9 +161,15 @@ export default function LoginPage() {
 
       <Card className="w-full max-w-md shadow-card border-slate-200/80">
         <CardHeader className="text-center pb-2">
-          <CardTitle className="text-xl">Sign in to your team</CardTitle>
+          <CardTitle className="text-xl">
+            {mode === 'password' && 'Sign in to your team'}
+            {mode === 'magic_link' && 'Sign in with Magic Link'}
+            {mode === 'forgot_password' && 'Reset your password'}
+          </CardTitle>
           <CardDescription>
-            Enter your email to enter your SIH workspace & collaborate with the AI 7th Member
+            {mode === 'password' && 'Enter your credentials to access your SIH workspace & AI 7th Member'}
+            {mode === 'magic_link' && 'We’ll email you a passwordless sign-in link via Resend'}
+            {mode === 'forgot_password' && 'Enter your account email and we’ll send a secure password reset link'}
           </CardDescription>
         </CardHeader>
 
@@ -106,35 +191,156 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-4">
-            <Input
-              label="Email Address"
-              type="email"
-              placeholder="teammate@college.edu"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+          {emailSentNotice && (
+            <div className="p-3.5 rounded-xl bg-sihgreen-50 text-sihgreen-800 text-xs border border-sihgreen-200 space-y-2">
+              <div className="flex items-center gap-1.5 font-bold text-sihgreen-900">
+                <CheckCircle2 className="h-4 w-4 text-sihgreen-600 shrink-0" />
+                <span>Email Dispatched!</span>
+              </div>
+              <p className="leading-relaxed">{emailSentNotice}</p>
+            </div>
+          )}
 
-            <Input
-              label="Password"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+          {/* Mode 1: Password Form */}
+          {mode === 'password' && (
+            <form onSubmit={handlePasswordLogin} className="space-y-4">
+              <Input
+                label="Email Address"
+                type="email"
+                placeholder="teammate@college.edu"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
 
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              loading={loading}
-              className="w-full shadow-glow-saffron font-bold text-sm"
-            >
-              Sign In to Workspace <ArrowRight className="h-4 w-4 ml-1" />
-            </Button>
-          </form>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">Password</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('forgot_password');
+                      setError(null);
+                      setEmailSentNotice(null);
+                    }}
+                    className="text-[11px] text-saffron-600 hover:text-saffron-700 font-semibold underline"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <Input
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                loading={loading}
+                className="w-full shadow-glow-saffron font-bold text-sm"
+              >
+                Sign In to Workspace <ArrowRight className="h-4 w-4 ml-1" />
+              </Button>
+
+              <div className="pt-1 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('magic_link');
+                    setError(null);
+                    setEmailSentNotice(null);
+                  }}
+                  className="text-xs text-slate-600 hover:text-slate-900 font-medium inline-flex items-center gap-1.5"
+                >
+                  <Mail className="h-3.5 w-3.5 text-slate-400" />
+                  <span>Sign in with Magic Link instead</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Mode 2: Magic Link Form */}
+          {mode === 'magic_link' && (
+            <form onSubmit={handleMagicLink} className="space-y-4">
+              <Input
+                label="Email Address"
+                type="email"
+                placeholder="teammate@college.edu"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                loading={loading}
+                className="w-full shadow-glow-saffron font-bold text-sm"
+              >
+                Send Magic Link <Mail className="h-4 w-4 ml-1" />
+              </Button>
+
+              <div className="pt-1 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('password');
+                    setError(null);
+                    setEmailSentNotice(null);
+                  }}
+                  className="text-xs text-slate-600 hover:text-slate-900 font-medium inline-flex items-center gap-1.5"
+                >
+                  <Lock className="h-3.5 w-3.5 text-slate-400" />
+                  <span>Back to Password Sign In</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Mode 3: Forgot Password Form */}
+          {mode === 'forgot_password' && (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <Input
+                label="Account Email Address"
+                type="email"
+                placeholder="teammate@college.edu"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                loading={loading}
+                className="w-full shadow-glow-saffron font-bold text-sm"
+              >
+                Send Password Reset Link <KeyRound className="h-4 w-4 ml-1" />
+              </Button>
+
+              <div className="pt-1 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('password');
+                    setError(null);
+                    setEmailSentNotice(null);
+                  }}
+                  className="text-xs text-slate-600 hover:text-slate-900 font-medium inline-flex items-center gap-1.5"
+                >
+                  <Lock className="h-3.5 w-3.5 text-slate-400" />
+                  <span>Back to Password Sign In</span>
+                </button>
+              </div>
+            </form>
+          )}
 
           <div className="text-center pt-4 border-t border-slate-100">
             <p className="text-xs text-slate-500">
@@ -147,5 +353,22 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
+            <Sparkles className="h-4 w-4 text-saffron-500 animate-spin" />
+            <span>Loading authentication...</span>
+          </div>
+        </div>
+      }
+    >
+      <LoginForm />
+    </React.Suspense>
   );
 }

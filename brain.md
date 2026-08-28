@@ -80,9 +80,10 @@ d:/CODING REALTED/Most important/MY SIH DASHBOARD/
 │   │           ├── import/whatsapp/route.ts # Parses & inserts WhatsApp chat history
 │   │           └── members/[userId]/role/route.ts # Owner assigns custom member role
 │   ├── auth/
-│   │   ├── callback/route.ts        # Supabase OAuth/magic link exchange
-│   │   ├── login/page.tsx           # Sign-in UI with Netlify env detection
-│   │   └── signup/page.tsx          # Sign-up UI with email confirmation detection
+│   │   ├── callback/route.ts        # Supabase OAuth, Magic Link & Password Reset exchange
+│   │   ├── login/page.tsx           # Sign-in UI (Password, Magic Link & Password Reset modes)
+│   │   ├── reset-password/page.tsx  # Password reset update page
+│   │   └── signup/page.tsx          # Sign-up UI with Resend SMTP confirmation detection
 │   ├── settings/
 │   │   └── page.tsx                 # Account-level Profile & Preferences Settings page
 │   ├── teams/
@@ -120,6 +121,8 @@ d:/CODING REALTED/Most important/MY SIH DASHBOARD/
 │   │   ├── research.ts              # Grounded research prompt builder & synthesis engine
 │   │   ├── search.ts                # Live internet search aggregator (DuckDuckGo + Wikipedia)
 │   │   └── types.ts                 # AI provider interfaces and data types
+│   ├── auth/
+│   │   └── errors.ts                # Friendly error translator for Supabase Auth & custom SMTP (Resend)
 │   ├── supabase/
 │   │   ├── admin.ts                 # Service role admin client (bypasses RLS for backend routes)
 │   │   ├── client.ts                # Browser Supabase client (@supabase/ssr)
